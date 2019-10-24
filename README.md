@@ -1,0 +1,3 @@
+# code note
+collect some userful code.
+In continuous update...
