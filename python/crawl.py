@@ -12,13 +12,17 @@ base_url = 'http://xxxxxx'
 start_url = 'http://xxxxxxx'
 base_dir = '/home/xxx/dxxxown'
 
+proxies = {
+        "http":"http:127.0.0.1:1080",
+        "https":"http:127.0.0.1:1080",
+        }
 
 def getHtml(url):
     print("getHtml", url)
     try:
         kv = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Safari/537.36'}
-        r = requests.get(url, headers=kv, timeout=30)
+        r = requests.get(url, headers=kv, timeout=30, proxies=proxies)
         r.encoding = 'utf-8'
         return r.text
 
@@ -56,7 +60,7 @@ def downFile(url):
     path = base_dir + urlparse(turl).path
     createDir(os.path.split(path)[0])
     startTime = time.time()
-    with requests.get(url, stream=True) as r:
+    with requests.get(url, stream=True,proxies=proxies) as r:
         contentLength = int(r.headers['content-length'])
         line = 'content-length: %dB/ %.2fKB/ %.2fMB'
         line = line % (contentLength, contentLength / 1024, contentLength / 1024 / 1024)
