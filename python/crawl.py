@@ -65,6 +65,9 @@ def downFile(url):
         line = 'content-length: %dB/ %.2fKB/ %.2fMB'
         line = line % (contentLength, contentLength / 1024, contentLength / 1024 / 1024)
         print(line)
+        if checkLocalFile(path, contentLength):
+            print("Already download")
+            return
         downSize = 0
         with open(path, 'wb') as f:
             for chunk in r.iter_content(8192):
@@ -82,6 +85,10 @@ def downFile(url):
         line = line % (timeCost, downSize / 1024 / timeCost)
         print(line)
 
+
+def checkLocalFile(filePath, lenght):
+    fileSize = os.path.getsize(filePath)
+    return fileSize == lenght
 
 def down(urls):
     if urls:
