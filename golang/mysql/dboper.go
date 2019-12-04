@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-type Kvmap map[string]interface{}
+type Kvmap map[string]sql.RawBytes
 
 type DbOper struct {
 	Db      *sql.DB
@@ -79,12 +79,19 @@ func (d *DbOper) TransQueryRows(tx *sql.Tx, sqlss string, outType interface{}) (
 	if err != nil {
 		return nil, err
 	}
-	r, err := d.RowTokv(rows, outType)
+
+	resultChan := make(chan []byte)
+	kvMapChan := make(chan Kvmap)
+	defer close(resultChan)
+
+	go d.convertSqlRawBytes(kvMapChan, resultChan, outType)
+
+	err = d.RowTokv(rows, kvMapChan)
 	if err != nil {
 		return nil, err
 	}
 
-	return d.convertSqlRawBytes(r, outType), nil
+	return <-resultChan, nil
 }
 
 func (d *DbOper) TransQueryRow(tx *sql.Tx, sqlss string, ret ...interface{}) error {
@@ -156,22 +163,24 @@ func (d *DbOper) GetRow(sqlss string, ret ...interface{}) error {
 	return nil
 }
 
-func (d *DbOper) RowTokv(rows *sql.Rows, outType interface{}) ([]Kvmap, error) {
-	var result []Kvmap
-
+func (d *DbOper) RowTokv(rows *sql.Rows, kvMapChan chan Kvmap) (err error) {
+	var (
+		columnLen int
+	)
+	defer close(kvMapChan)
 	// Get column names
 	columns, err := rows.Columns()
 	if err != nil {
-		return result, err
+		return
 	}
-
+	columnLen = len(columns)
 	// Make a slice for the values
-	values := make([]sql.RawBytes, len(columns))
+	values := make([]sql.RawBytes, columnLen)
 
 	// rows.Scan wants '[]interface{}' as an argument, so we must copy the
 	// references into such a slice
 	// See http://code.google.com/p/go-wiki/wiki/InterfaceSlice for details
-	scanArgs := make([]interface{}, len(columns))
+	scanArgs := make([]interface{}, columnLen)
 	for i := range values {
 		scanArgs[i] = &values[i]
 	}
@@ -180,47 +189,51 @@ func (d *DbOper) RowTokv(rows *sql.Rows, outType interface{}) ([]Kvmap, error) {
 		// get RawBytes from data
 		err = rows.Scan(scanArgs...)
 		if err != nil {
-			return result, err
+			return
 		}
-		line := make(Kvmap)
-
+		var line Kvmap
+		line = make(Kvmap, columnLen)
 		for i, col := range values {
+			//fmt.Println("vvvvvvvvvv:", string(col))
 			line[columns[i]] = col
 		}
-		result = append(result, line)
+		kvMapChan <- line
 	}
 
 	if err = rows.Err(); err != nil {
-		return result, err
+		return
 	}
 	//	fmt.Println("result:", result)
-	return result, nil
+
+	return
 }
 
-func (d *DbOper) convertSqlRawBytes(in []Kvmap, outType interface{}) []byte {
+func (d *DbOper) convertSqlRawBytes(kvMapChan chan Kvmap, resultChan chan []byte, outType interface{}) {
 	var convert []map[string]interface{}
 
 	t := reflect.TypeOf(outType)
 	if t.Kind() != reflect.Struct {
-		return nil
+		return
 	}
 	vOf := reflect.ValueOf(outType)
 	//fmt.Println(vOf.Field(0).Type().Name())
-	for _, element := range in {
+	for element := range kvMapChan {
 		var tmp = make(map[string]interface{})
 		for k, v := range element {
 			switch vOf.FieldByName(k).Type().String() {
 			case "sql.NullInt64":
-				tmp[k] = STI32(string(v.(sql.RawBytes)))
+				tmp[k] = rxs.STI64(string(v))
+			case "sql.NullInt32":
+				tmp[k] = rxs.STI32(string(v))
 			case "sql.NullString":
-				tmp[k] = string(v.(sql.RawBytes))
+				tmp[k] = string(v)
 			case "sql.NullFloat64":
-				tmp[k] = STF64(string(v.(sql.RawBytes)))
+				tmp[k] = rxs.STF64(string(v))
 			case "sql.NullTime":
-				t, _ := time.Parse(time.RFC3339, string(v.(sql.RawBytes)))
+				t, _ := time.Parse(time.RFC3339, string(v))
 				tmp[k] = t.Format("2006-01-02 15:04:05")
 			default:
-				tmp[k] = v.(sql.RawBytes)
+				tmp[k] = v
 			}
 		}
 		convert = append(convert, tmp)
@@ -228,14 +241,15 @@ func (d *DbOper) convertSqlRawBytes(in []Kvmap, outType interface{}) []byte {
 	ret, err := json.Marshal(convert)
 	if err != nil {
 		log.Error("marshal error:", err)
-		return nil
+		return
 	}
-	return ret
+	resultChan <- ret
+	return
 }
 
-func (d *DbOper) GetMulitRows(sqlss string, outType interface{}) ([]byte, error) {
+func (d *DbOper) GetMulitRows(sqlss string, outType interface{}) (ret []byte, err error) {
 	log.Debug("GetMulitRows:", sqlss)
-	err := d.connRetires()
+	err = d.connRetires()
 	if err != nil {
 		return nil, err
 	}
@@ -246,12 +260,18 @@ func (d *DbOper) GetMulitRows(sqlss string, outType interface{}) ([]byte, error)
 		return nil, err
 	}
 
-	r, err := d.RowTokv(rows, outType)
+	resultChan := make(chan []byte)
+	kvMapChan := make(chan Kvmap)
+	defer close(resultChan)
+
+	go d.convertSqlRawBytes(kvMapChan, resultChan, outType)
+
+	err = d.RowTokv(rows, kvMapChan)
 	if err != nil {
 		return nil, err
 	}
 
-	return d.convertSqlRawBytes(r, outType), nil
+	return <-resultChan, nil
 }
 
 const maxRetires = 5
